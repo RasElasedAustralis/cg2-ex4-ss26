@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# polyscope
+skeleton/.polyscope.ini
+skeleton/imgui.ini
+
 # C extensions
 *.so
 

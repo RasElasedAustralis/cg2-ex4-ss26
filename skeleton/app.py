@@ -1,13 +1,14 @@
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from copy import deepcopy
 
 import numpy as np
 import polyscope as ps
 import polyscope.imgui as psim
 
 from point_cloud import PointCloud, load_obj_file
-from smoothing import smooth_n_times
+from smoothing import smooth_n_times, smooth_n_times_cotan
 
 
 
@@ -28,10 +29,14 @@ def timed(func):
 class PSState:
     files: list[Path]
     selected_idx: int = 0
+    original_point_cloud: PointCloud | None = None
     point_cloud: PointCloud | None = None
     show_points: bool = False
     show_mesh: bool = True
     smoothing_iter: int = 1
+    lmbda: float = 0.1
+    laplace_operator_idx: int = 0
+    laplace_operator_items: list[str] = None
 
 class PSApp:
     state: PSState
@@ -44,6 +49,7 @@ class PSApp:
         self.constraint_handle = None
         self.grid_handle = None
         self.mesh_handle = None
+        self.state.laplace_operator_items = ["uniform", "cotangent"]
 
     def run(self):
         ps.init()
@@ -75,14 +81,6 @@ class PSApp:
             psim.TextUnformatted(f"Loaded: {self.state.point_cloud.name}")
 
     def _draw_display_controls(self):
-        changed_points, self.state.show_points = psim.Checkbox(
-            "Show vertices",
-            self.state.show_points,
-        )
-
-        if changed_points and self.pointcloud_handle is not None:
-            self.pointcloud_handle.set_enabled(self.state.show_points)
-
         changed_mesh, self.state.show_mesh = psim.Checkbox(
             "Show mesh",
             self.state.show_mesh,
@@ -98,51 +96,59 @@ class PSApp:
 
         psim.TextUnformatted("Laplacian smoothing")
         psim.Separator()
-        n_smooth = 1
-        changed, self.state.smoothing_iter = psim.SliderInt("Iterations", self.state.smoothing_iter, 1, 100)
+        _, self.state.laplace_operator_idx = psim.Combo("Laplace operator", self.state.laplace_operator_idx, self.state.laplace_operator_items)
+        _, self.state.smoothing_iter = psim.SliderInt("Iterations", self.state.smoothing_iter, 1, 20)
+        _, self.state.lmbda = psim.SliderFloat("Lambda", self.state.lmbda, 0, 1)
         if psim.Button("Smooth"):
-            self.state.point_cloud.vertices = smooth_n_times(
-                self.state.smoothing_iter,
-                self.state.point_cloud.vertices,
-                self.state.point_cloud.faces,
-                h=1.0,
-            )
+            if self.state.laplace_operator_items[self.state.laplace_operator_idx] == "uniform":
+                self.state.point_cloud.vertices = smooth_n_times(
+                    self.state.smoothing_iter,
+                    self.state.point_cloud.vertices,
+                    self.state.point_cloud.faces,
+                    h=self.state.lmbda
+                )
+            elif self.state.laplace_operator_items[self.state.laplace_operator_idx] == "cotangent":
+                self.state.point_cloud.vertices = smooth_n_times_cotan(
+                    self.state.smoothing_iter,
+                    self.state.point_cloud.vertices,
+                    self.state.point_cloud.faces,
+                    h=self.state.lmbda
+                )
+            else:
+                raise ValueError(f"Unknown laplace operator: {self.state.laplace_operator_items[self.state.laplace_operator_idx]}")
             ps.remove_all_structures()
-            self._register_point_cloud(self.state.point_cloud)
+            self._register_point_cloud(self.state.original_point_cloud, "original_point_cloud", see_through=True)
+            self._register_point_cloud(self.state.point_cloud, "smoothed_point_cloud")
 
     def load_selected_file(self):
         path = self.state.files[self.state.selected_idx]
         point_cloud = load_obj_file(path)
 
         self.state.point_cloud = point_cloud
+        self.state.original_point_cloud = deepcopy(point_cloud)
         self.state.constraints = None
         self.state.grid = None
         self.state.normals_flipped = False
 
         ps.remove_all_structures()
-        self._register_point_cloud(point_cloud)
+        self._register_point_cloud(point_cloud, "original_point_cloud")
 
         ps.reset_camera_to_home_view()
 
-    def _register_point_cloud(self, point_cloud: PointCloud):
-        point_radius = 0.003 * point_cloud.bbox_diagonal
-
-        if point_cloud.name == "cat.off":
-            point_radius = 0.01
-
-        self.pointcloud_handle = ps.register_point_cloud(
-            "vertices",
-            point_cloud.vertices,
-            radius=point_radius,
-            enabled=self.state.show_points,
-        )
-
-        ps.register_surface_mesh(
-            "point_cloud_mesh",
+    def _register_point_cloud(self, point_cloud: PointCloud, point_cloud_name: str = "point_cloud", see_through: bool = False):
+        mesh = ps.register_surface_mesh(
+            point_cloud_name,
             point_cloud.vertices,
             point_cloud.faces,
             enabled=self.state.show_mesh,
         )
+        
+        if see_through:
+            mesh.set_transparency(0.3)
+            mesh.set_color([0.5, 0.5, 0.5])
+        else:
+            mesh.set_transparency(1)
+            mesh.set_color([0.3, 0.8, 0.5])
 
 
 

@@ -29,3 +29,19 @@ def smooth_n_times(n, vertices, faces, h=1.0):
         vertices = laplacian_smooth(vertices, neighbors, h)
 
     return vertices
+
+def smooth_explicit_euler():
+    pass
+
+def smooth_implicit_euler():
+    pass
+
+def laplace_mat():
+    pass
+
+def lumbed_mass_mat():
+    pass
+
+def circumcentric_dual_mass_mat():
+    pass
+
